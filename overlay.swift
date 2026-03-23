@@ -16,11 +16,14 @@ try? "\(ProcessInfo.processInfo.processIdentifier)".write(toFile: pidFile, atomi
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
-let screen = NSScreen.main!.frame
-let size: CGFloat = 44
+// 取鼠标所在屏幕（多显示器兼容）
+let mouseScreen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main!
+let sf = mouseScreen.frame
+let vf = mouseScreen.visibleFrame
+let size: CGFloat = 56
 
 let window = NSWindow(
-    contentRect: NSRect(x: (screen.width - size)/2, y: screen.height - 72, width: size, height: size),
+    contentRect: NSRect(x: sf.midX - size/2, y: vf.maxY - size - 12, width: size, height: size),
     styleMask: .borderless, backing: .buffered, defer: false
 )
 window.level = .statusBar
@@ -48,28 +51,28 @@ class V: NSView {
         let cx = b.midX, cy = b.midY
 
         if mode == "recording" {
-            // 外圈：极淡呼吸光环
+            let blue = NSColor(red: 0.35, green: 0.6, blue: 1.0, alpha: 1)
             let breath = 0.5 + 0.5 * sin(t * 2.0)
-            let outerR: CGFloat = 20 + CGFloat(breath) * 2
-            let outerAlpha = 0.04 + breath * 0.06
-            NSColor(red: 1, green: 0.25, blue: 0.25, alpha: CGFloat(outerAlpha)).setFill()
+
+            // 外层光晕
+            let outerR: CGFloat = 24 + CGFloat(breath) * 3
+            blue.withAlphaComponent(CGFloat(0.04 + breath * 0.07)).setFill()
             NSBezierPath(ovalIn: NSRect(x: cx-outerR, y: cy-outerR, width: outerR*2, height: outerR*2)).fill()
 
-            // 中圈
-            let midR: CGFloat = 13 + CGFloat(breath) * 1.5
-            let midAlpha = 0.06 + breath * 0.08
-            NSColor(red: 1, green: 0.25, blue: 0.25, alpha: CGFloat(midAlpha)).setFill()
+            // 中层
+            let midR: CGFloat = 16 + CGFloat(breath) * 2
+            blue.withAlphaComponent(CGFloat(0.07 + breath * 0.1)).setFill()
             NSBezierPath(ovalIn: NSRect(x: cx-midR, y: cy-midR, width: midR*2, height: midR*2)).fill()
 
-            // 核心红点
-            let dotR: CGFloat = 6
-            let dotAlpha = 0.75 + breath * 0.25
-            NSColor(red: 1, green: 0.22, blue: 0.22, alpha: CGFloat(dotAlpha)).setFill()
+            // 核心点
+            let dotR: CGFloat = 7.5
+            blue.withAlphaComponent(CGFloat(0.7 + breath * 0.3)).setFill()
             NSBezierPath(ovalIn: NSRect(x: cx-dotR, y: cy-dotR, width: dotR*2, height: dotR*2)).fill()
 
         } else {
             // 三个追逐圆点，绕中心旋转
-            let r: CGFloat = 10
+            let blue = NSColor(red: 0.35, green: 0.6, blue: 1.0, alpha: 1)
+            let r: CGFloat = 12
             for i in 0..<3 {
                 let offset = Double(i) * (2.0 * .pi / 3.0)
                 let angle = t * 2.5 + offset
@@ -84,13 +87,13 @@ class V: NSView {
                     let ty = cy + r * CGFloat(sin(tailAngle))
                     let tailAlpha = 0.5 * Double(tailCount - j) / Double(tailCount)
                     let tailR: CGFloat = 2.5 - CGFloat(j) * 0.4
-                    NSColor(white: 0.85, alpha: CGFloat(tailAlpha)).setFill()
+                    blue.withAlphaComponent(CGFloat(tailAlpha)).setFill()
                     NSBezierPath(ovalIn: NSRect(x: tx-tailR, y: ty-tailR, width: tailR*2, height: tailR*2)).fill()
                 }
 
                 // 主点
-                NSColor(white: 0.92, alpha: 0.9).setFill()
-                NSBezierPath(ovalIn: NSRect(x: px-2.8, y: py-2.8, width: 5.6, height: 5.6)).fill()
+                blue.withAlphaComponent(0.9).setFill()
+                NSBezierPath(ovalIn: NSRect(x: px-3.2, y: py-3.2, width: 6.4, height: 6.4)).fill()
             }
         }
     }

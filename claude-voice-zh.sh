@@ -109,6 +109,7 @@ if [ -f "$LOCK_FILE" ]; then
         -m "$MODEL" \
         -l "$WHISPER_LANG" \
         -nt \
+        --prompt "这是带标点的中文。你好，世界！" \
         -of "$TMP_TXT" \
         -otxt \
         "$TMP_WAV" 2>>"$LOG"
@@ -118,8 +119,8 @@ if [ -f "$LOCK_FILE" ]; then
         RESULT=$(cat "${TMP_TXT}.txt" | sed '/^$/d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '\n')
         log "result: [$RESULT]"
 
-        # 过滤 whisper 幻觉输出（空括号、纯标点等）
-        CLEAN=$(echo "$RESULT" | sed 's/[()（）\[\]]*//g' | sed 's/^[[:space:]]*$//')
+        # 过滤 whisper 幻觉输出（空括号、纯标点、prompt 回声）
+        CLEAN=$(echo "$RESULT" | sed 's/[()（）\[\]]*//g' | sed 's/这是带标点的中文。你好，世界！//g' | sed 's/^[[:space:]]*$//')
         if [ -n "$CLEAN" ]; then
             printf '%s' "$RESULT" | pbcopy
             hide_overlay
