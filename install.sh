@@ -54,7 +54,7 @@ install_if_missing sox sox
 install_if_missing skhd koekeishiya/formulae/skhd
 
 # --- 下载模型 ---
-echo -e "${YELLOW}[2/5]${NC} 下载 Whisper 模型 (small, ~500MB)..."
+echo -e "${YELLOW}[2/6]${NC} 下载 Whisper 模型 (small, ~500MB)..."
 mkdir -p "$MODEL_DIR"
 
 if [ -f "$MODEL_DIR/ggml-small.bin" ]; then
@@ -65,8 +65,24 @@ else
     echo -e "  ${GREEN}✓${NC} 下载完成"
 fi
 
+# --- 编译状态指示器 ---
+echo -e "${YELLOW}[3/6]${NC} 编译状态指示器..."
+OVERLAY_SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/overlay.swift"
+if [ -f "$OVERLAY_SOURCE" ]; then
+    swiftc "$OVERLAY_SOURCE" -o "$INSTALL_DIR/overlay" -framework AppKit 2>/dev/null
+else
+    curl -fsSL -o "$INSTALL_DIR/overlay.swift" "$REPO_URL/overlay.swift"
+    swiftc "$INSTALL_DIR/overlay.swift" -o "$INSTALL_DIR/overlay" -framework AppKit 2>/dev/null
+    rm -f "$INSTALL_DIR/overlay.swift"
+fi
+if [ -f "$INSTALL_DIR/overlay" ]; then
+    echo -e "  ${GREEN}✓${NC}"
+else
+    echo -e "  ${YELLOW}跳过（编译失败，不影响核心功能）${NC}"
+fi
+
 # --- 安装主脚本 ---
-echo -e "${YELLOW}[3/5]${NC} 安装脚本..."
+echo -e "${YELLOW}[4/6]${NC} 安装脚本..."
 mkdir -p "$BIN_DIR"
 
 # 如果是从 curl | bash 运行，从 GitHub 下载脚本；否则用本地文件
@@ -83,7 +99,7 @@ ln -sf "$INSTALL_DIR/claude-voice-zh.sh" "$BIN_DIR/claude-voice-zh"
 echo -e "  ${GREEN}✓${NC}"
 
 # --- 配置快捷键 ---
-echo -e "${YELLOW}[4/5]${NC} 配置快捷键 (F5)..."
+echo -e "${YELLOW}[5/6]${NC} 配置快捷键 (F5)..."
 mkdir -p "$SKHD_CONFIG_DIR"
 
 SKHD_ENTRY="fn - f5 : $INSTALL_DIR/claude-voice-zh.sh"
@@ -99,7 +115,7 @@ echo "$SKHD_ENTRY" >> "$SKHD_CONFIG_DIR/skhdrc"
 echo -e "  ${GREEN}✓${NC}"
 
 # --- 启动 skhd ---
-echo -e "${YELLOW}[5/5]${NC} 启动快捷键服务..."
+echo -e "${YELLOW}[6/6]${NC} 启动快捷键服务..."
 
 skhd --stop-service 2>/dev/null || true
 sleep 1

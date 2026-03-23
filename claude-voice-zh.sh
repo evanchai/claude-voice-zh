@@ -36,6 +36,14 @@ notify() {
 beep_start() { afplay /System/Library/Sounds/Tink.aiff 2>/dev/null & }
 beep_stop()  { afplay /System/Library/Sounds/Pop.aiff 2>/dev/null & }
 
+OVERLAY="$CLAUDE_VOICE_DIR/overlay"
+show_overlay() {
+    [ -x "$OVERLAY" ] && "$OVERLAY" "$1" &
+}
+hide_overlay() {
+    [ -x "$OVERLAY" ] && "$OVERLAY" hide &
+}
+
 # --- 防抖（skhd 按键会重复触发）---
 if [ -f "$DEBOUNCE_FILE" ]; then
     last_mod=$(stat -f %m "$DEBOUNCE_FILE" 2>/dev/null || echo 0)
@@ -67,6 +75,7 @@ if [ -f "$LOCK_FILE" ]; then
     # --- 第二次按：停止录音 → 转写 → 粘贴 ---
     rm -f "$LOCK_FILE"
     beep_stop
+    show_overlay transcribing
     log "stop recording"
 
     if [ -f "$PID_FILE" ]; then
@@ -83,6 +92,7 @@ if [ -f "$LOCK_FILE" ]; then
 
     if [ ! -f "$TMP_WAV" ] || [ "$(wc -c < "$TMP_WAV")" -lt 1000 ]; then
         log "wav too small or missing"
+        hide_overlay
         notify "录音太短，请重试"
         rm -f "$TMP_WAV"
         exit 1
@@ -112,16 +122,18 @@ if [ -f "$LOCK_FILE" ]; then
         CLEAN=$(echo "$RESULT" | sed 's/[()（）\[\]]*//g' | sed 's/^[[:space:]]*$//')
         if [ -n "$CLEAN" ]; then
             printf '%s' "$RESULT" | pbcopy
-            notify "$RESULT"
-            sleep 0.5
+            hide_overlay
+            sleep 0.3
             osascript -e 'tell application "System Events" to keystroke "v" using command down'
             log "pasted"
         else
             log "empty after cleanup"
+            hide_overlay
             notify "未检测到语音"
         fi
     else
         log "no output file"
+        hide_overlay
         notify "转写失败"
     fi
 
@@ -134,7 +146,7 @@ else
 
     touch "$LOCK_FILE"
     beep_start
-    notify "录音中..."
+    show_overlay recording
 
     rec -q "$TMP_WAV" &
     echo $! > "$PID_FILE"
