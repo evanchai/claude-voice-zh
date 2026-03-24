@@ -30,15 +30,8 @@ echo -e "  命令链接 ${GREEN}✓${NC}"
 
 # 移除安装目录（含模型）
 if [ -d "$INSTALL_DIR" ]; then
-    echo -n "  删除模型文件 (~500MB)? [y/N] "
-    read -r answer
-    if [[ "$answer" =~ ^[Yy]$ ]]; then
-        rm -rf "$INSTALL_DIR"
-        echo -e "  安装目录 ${GREEN}✓${NC}"
-    else
-        rm -f "$INSTALL_DIR/claude-voice-zh.sh"
-        echo -e "  脚本已删除，模型保留在 $INSTALL_DIR/models/"
-    fi
+    rm -rf "$INSTALL_DIR"
+    echo -e "  安装目录 ${GREEN}✓${NC}"
 fi
 
 # 清理临时文件
@@ -48,6 +41,6 @@ echo -e "  临时文件 ${GREEN}✓${NC}"
 echo ""
 echo -e "${GREEN}✅ 卸载完成${NC}"
 echo ""
-echo -e "  注意：skhd 和 whisper-cpp 未卸载（可能被其他工具使用）"
-echo -e "  如需卸载：brew uninstall skhd whisper-cpp sox"
+echo -e "  注意：skhd 未卸载（可能被其他工具使用）"
+echo -e "  如需卸载：brew uninstall skhd"
 echo ""

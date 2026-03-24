@@ -1,9 +1,6 @@
 #!/bin/bash
-# claude-voice-zh — 本地 Whisper 中文语音输入，专为 Claude Code 设计
+# claude-voice-zh — Apple 原生中文语音输入，专为 Claude Code 设计
 # https://github.com/nicning/claude-voice-zh
-#
-# 按一次快捷键开始录音，再按一次停止 → 本地转写 → 自动粘贴
-# 完全离线，不联网，隐私安全
 
 set -euo pipefail
 
@@ -13,38 +10,69 @@ export LC_ALL="en_US.UTF-8"
 
 # --- 配置 ---
 CLAUDE_VOICE_DIR="${CLAUDE_VOICE_DIR:-$HOME/.claude-voice-zh}"
-MODEL="${CLAUDE_VOICE_MODEL:-$CLAUDE_VOICE_DIR/models/ggml-small.bin}"
-WHISPER_LANG="${CLAUDE_VOICE_LANG:-zh}"
+VOICE_LANG="${CLAUDE_VOICE_LANG:-zh}"
 
 # --- 临时文件 ---
 TMP_DIR="/tmp/claude-voice-zh"
 mkdir -p "$TMP_DIR"
-TMP_WAV="$TMP_DIR/recording.wav"
-TMP_TXT="$TMP_DIR/result"
 LOCK_FILE="$TMP_DIR/lock"
-PID_FILE="$TMP_DIR/rec.pid"
+REC_PID_FILE="$TMP_DIR/rec.pid"
+OVERLAY_PID_FILE="$TMP_DIR/overlay.pid"
+OVERLAY_STATE_FILE="$TMP_DIR/overlay-state"
+RESULT_FILE="$TMP_DIR/result.txt"
 DEBOUNCE_FILE="$TMP_DIR/debounce"
 LOG="$TMP_DIR/debug.log"
 
 # --- 工具函数 ---
 log() { echo "[$(date '+%H:%M:%S')] $1" >> "$LOG"; }
 
-notify() {
-    osascript -e "display notification \"$1\" with title \"Claude Voice\"" 2>/dev/null &
-}
-
 beep_start() { afplay /System/Library/Sounds/Tink.aiff 2>/dev/null & }
 beep_stop()  { afplay /System/Library/Sounds/Pop.aiff 2>/dev/null & }
 
 OVERLAY="$CLAUDE_VOICE_DIR/overlay"
-show_overlay() {
-    [ -x "$OVERLAY" ] && "$OVERLAY" "$1" &
-}
-hide_overlay() {
-    [ -x "$OVERLAY" ] && "$OVERLAY" hide &
+RECOGNIZER="$CLAUDE_VOICE_DIR/recognizer"
+
+write_overlay_state() {
+    local mode="$1"
+    local text="${2:-}"
+    local tmp="$OVERLAY_STATE_FILE.tmp"
+    printf '%s\n%s\n' "$mode" "$text" > "$tmp"
+    mv "$tmp" "$OVERLAY_STATE_FILE"
 }
 
-# --- 防抖（skhd 按键会重复触发）---
+ensure_overlay() {
+    [ -x "$OVERLAY" ] || return 0
+    if [ -f "$OVERLAY_PID_FILE" ]; then
+        local pid
+        pid=$(cat "$OVERLAY_PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    "$OVERLAY" start >/dev/null 2>&1 &
+}
+
+hide_overlay() {
+    rm -f "$OVERLAY_STATE_FILE"
+    [ -x "$OVERLAY" ] && "$OVERLAY" hide >/dev/null 2>&1 &
+}
+
+stop_pid() {
+    local file="$1"
+    local pid=""
+    [ -f "$file" ] || return 0
+    pid=$(cat "$file" 2>/dev/null || true)
+    rm -f "$file"
+    [ -n "$pid" ] || return 0
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 30); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+}
+
+# --- 防抖 ---
 if [ -f "$DEBOUNCE_FILE" ]; then
     last_mod=$(stat -f %m "$DEBOUNCE_FILE" 2>/dev/null || echo 0)
     now=$(date +%s)
@@ -55,101 +83,57 @@ fi
 touch "$DEBOUNCE_FILE"
 
 # --- 依赖检查 ---
-for cmd in whisper-cli rec sox pbcopy osascript; do
-    if ! command -v "$cmd" &>/dev/null; then
-        notify "缺少依赖: $cmd，请重新运行 install.sh"
-        log "missing dep: $cmd"
-        exit 1
-    fi
-done
-
-if [ ! -f "$MODEL" ]; then
-    notify "模型文件不存在，请重新运行 install.sh"
-    log "model not found: $MODEL"
+if [ ! -x "$RECOGNIZER" ]; then
+    osascript -e 'display notification "recognizer 未编译，请运行 install.sh" with title "Claude Voice"' 2>/dev/null &
     exit 1
 fi
 
 # === 主逻辑 ===
 
 if [ -f "$LOCK_FILE" ]; then
-    # --- 第二次按：停止录音 → 转写 → 粘贴 ---
+    # --- 停止 → 粘贴 ---
     rm -f "$LOCK_FILE"
     beep_stop
-    show_overlay transcribing
-    log "stop recording"
+    log "stop"
 
-    if [ -f "$PID_FILE" ]; then
-        REC_PID=$(cat "$PID_FILE")
-        kill "$REC_PID" 2>/dev/null || true
-        for _ in $(seq 1 20); do
-            kill -0 "$REC_PID" 2>/dev/null || break
-            sleep 0.1
-        done
-        rm -f "$PID_FILE"
-    fi
+    stop_pid "$REC_PID_FILE"
 
-    log "wav: $([ -f "$TMP_WAV" ] && echo "$(wc -c < "$TMP_WAV") bytes" || echo "missing")"
-
-    if [ ! -f "$TMP_WAV" ] || [ "$(wc -c < "$TMP_WAV")" -lt 1000 ]; then
-        log "wav too small or missing"
-        hide_overlay
-        notify "录音太短，请重试"
-        rm -f "$TMP_WAV"
-        exit 1
-    fi
-
-    notify "转写中..."
-
-    # 转换为 whisper 需要的 16kHz mono 16bit
-    sox "$TMP_WAV" -r 16000 -c 1 -b 16 "$TMP_DIR/16k.wav" 2>>"$LOG"
-    mv "$TMP_DIR/16k.wav" "$TMP_WAV"
-
-    log "whisper start"
-    whisper-cli \
-        -m "$MODEL" \
-        -l "$WHISPER_LANG" \
-        -nt \
-        --prompt "这是带标点的中文。你好，世界！" \
-        -of "$TMP_TXT" \
-        -otxt \
-        "$TMP_WAV" 2>>"$LOG"
-    log "whisper done, exit=$?"
-
-    if [ -f "${TMP_TXT}.txt" ]; then
-        RESULT=$(cat "${TMP_TXT}.txt" | sed '/^$/d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '\n')
+    if [ -f "$RESULT_FILE" ]; then
+        RESULT=$(cat "$RESULT_FILE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         log "result: [$RESULT]"
 
-        # 过滤 whisper 幻觉输出（空括号、纯标点、prompt 回声）
-        CLEAN=$(echo "$RESULT" | sed 's/[()（）\[\]]*//g' | sed 's/这是带标点的中文。你好，世界！//g' | sed 's/^[[:space:]]*$//')
-        if [ -n "$CLEAN" ]; then
+        if [ -n "$RESULT" ]; then
             printf '%s' "$RESULT" | pbcopy
             hide_overlay
-            sleep 0.3
+            sleep 0.05
             osascript -e 'tell application "System Events" to keystroke "v" using command down'
             log "pasted"
         else
-            log "empty after cleanup"
             hide_overlay
-            notify "未检测到语音"
+            osascript -e 'display notification "未检测到语音" with title "Claude Voice"' 2>/dev/null &
         fi
     else
-        log "no output file"
         hide_overlay
-        notify "转写失败"
+        osascript -e 'display notification "识别失败" with title "Claude Voice"' 2>/dev/null &
     fi
 
-    rm -f "$TMP_WAV" "${TMP_TXT}.txt"
+    rm -f "$RESULT_FILE"
 else
-    # --- 第一次按：开始录音 ---
-    log "start recording"
-    [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null || true
-    rm -f "$TMP_WAV"
+    # --- 开始录音+识别 ---
+    log "start"
+    stop_pid "$REC_PID_FILE"
+    rm -f "$RESULT_FILE"
 
     touch "$LOCK_FILE"
     beep_start
-    show_overlay recording
+    write_overlay_state recording ""
+    ensure_overlay
 
-    rec -q "$TMP_WAV" &
-    echo $! > "$PID_FILE"
-    log "rec pid=$!"
+    "$RECOGNIZER" \
+        --lang "$VOICE_LANG" \
+        --state "$OVERLAY_STATE_FILE" \
+        --result "$RESULT_FILE" \
+        >>"$LOG" 2>&1 &
+    echo $! > "$REC_PID_FILE"
+    log "recognizer pid=$!"
 fi

@@ -14,9 +14,7 @@ NC='\033[0m'
 
 INSTALL_DIR="$HOME/.claude-voice-zh"
 BIN_DIR="$HOME/.local/bin"
-MODEL_DIR="$INSTALL_DIR/models"
 SKHD_CONFIG_DIR="$HOME/.config/skhd"
-MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
 REPO_URL="https://raw.githubusercontent.com/nicning/claude-voice-zh/main"
 
 echo ""
@@ -38,55 +36,59 @@ if ! command -v brew &>/dev/null; then
 fi
 
 # --- 安装依赖 ---
-echo -e "${YELLOW}[1/5]${NC} 安装依赖..."
+echo -e "${YELLOW}[1/4]${NC} 安装依赖..."
 
-install_if_missing() {
-    if ! command -v "$1" &>/dev/null; then
-        echo "  安装 $2..."
-        brew install "$2" 2>/dev/null
+if ! command -v skhd &>/dev/null; then
+    echo "  安装 skhd..."
+    brew install koekeishiya/formulae/skhd 2>/dev/null
+else
+    echo -e "  skhd ${GREEN}✓${NC}"
+fi
+
+# --- 编译 Swift 组件 ---
+echo -e "${YELLOW}[2/4]${NC} 编译语音识别引擎..."
+mkdir -p "$INSTALL_DIR"
+
+compile_swift() {
+    local name="$1"
+    local src="$2"
+    local frameworks="$3"
+
+    if [ -f "$src" ]; then
+        local source="$src"
     else
-        echo -e "  $2 ${GREEN}✓${NC}"
+        local source="$INSTALL_DIR/${name}.swift"
+        curl -fsSL -o "$source" "$REPO_URL/${name}.swift"
+    fi
+
+    if swiftc "$source" -o "$INSTALL_DIR/$name" $frameworks 2>/dev/null; then
+        echo -e "  $name ${GREEN}✓${NC}"
+        [ "$source" = "$INSTALL_DIR/${name}.swift" ] && rm -f "$source"
+        return 0
+    else
+        echo -e "  $name ${RED}编译失败${NC}"
+        [ "$source" = "$INSTALL_DIR/${name}.swift" ] && rm -f "$source"
+        return 1
     fi
 }
 
-install_if_missing whisper-cli whisper-cpp
-install_if_missing sox sox
-install_if_missing skhd koekeishiya/formulae/skhd
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
-# --- 下载模型 ---
-echo -e "${YELLOW}[2/6]${NC} 下载 Whisper 模型 (small, ~500MB)..."
-mkdir -p "$MODEL_DIR"
-
-if [ -f "$MODEL_DIR/ggml-small.bin" ]; then
-    echo -e "  模型已存在 ${GREEN}✓${NC}"
-else
-    echo "  下载中，请稍候..."
-    curl -L --progress-bar -o "$MODEL_DIR/ggml-small.bin" "$MODEL_URL"
-    echo -e "  ${GREEN}✓${NC} 下载完成"
+# recognizer — 核心：语音识别引擎（必须成功）
+if ! compile_swift "recognizer" "$SCRIPT_DIR/recognizer.swift" "-framework AVFoundation -framework Speech"; then
+    echo -e "${RED}recognizer 编译失败，无法继续安装${NC}"
+    exit 1
 fi
 
-# --- 编译状态指示器 ---
-echo -e "${YELLOW}[3/6]${NC} 编译状态指示器..."
-OVERLAY_SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/overlay.swift"
-if [ -f "$OVERLAY_SOURCE" ]; then
-    swiftc "$OVERLAY_SOURCE" -o "$INSTALL_DIR/overlay" -framework AppKit 2>/dev/null
-else
-    curl -fsSL -o "$INSTALL_DIR/overlay.swift" "$REPO_URL/overlay.swift"
-    swiftc "$INSTALL_DIR/overlay.swift" -o "$INSTALL_DIR/overlay" -framework AppKit 2>/dev/null
-    rm -f "$INSTALL_DIR/overlay.swift"
-fi
-if [ -f "$INSTALL_DIR/overlay" ]; then
-    echo -e "  ${GREEN}✓${NC}"
-else
-    echo -e "  ${YELLOW}跳过（编译失败，不影响核心功能）${NC}"
-fi
+# overlay — 可选：状态指示器 UI
+compile_swift "overlay" "$SCRIPT_DIR/overlay.swift" "-framework AppKit" || \
+    echo -e "  ${YELLOW}overlay 跳过（不影响核心功能）${NC}"
 
 # --- 安装主脚本 ---
-echo -e "${YELLOW}[4/6]${NC} 安装脚本..."
+echo -e "${YELLOW}[3/4]${NC} 安装脚本..."
 mkdir -p "$BIN_DIR"
 
-# 如果是从 curl | bash 运行，从 GitHub 下载脚本；否则用本地文件
-SCRIPT_SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/claude-voice-zh.sh"
+SCRIPT_SOURCE="$SCRIPT_DIR/claude-voice-zh.sh"
 if [ -f "$SCRIPT_SOURCE" ]; then
     cp "$SCRIPT_SOURCE" "$INSTALL_DIR/claude-voice-zh.sh"
 else
@@ -94,35 +96,29 @@ else
 fi
 chmod +x "$INSTALL_DIR/claude-voice-zh.sh"
 
-# 创建 symlink 到 PATH
 ln -sf "$INSTALL_DIR/claude-voice-zh.sh" "$BIN_DIR/claude-voice-zh"
 echo -e "  ${GREEN}✓${NC}"
 
 # --- 配置快捷键 ---
-echo -e "${YELLOW}[5/6]${NC} 配置快捷键 (F5)..."
+echo -e "${YELLOW}[4/4]${NC} 配置快捷键 (F5)..."
 mkdir -p "$SKHD_CONFIG_DIR"
 
 SKHD_ENTRY="fn - f5 : $INSTALL_DIR/claude-voice-zh.sh"
 
 if [ -f "$SKHD_CONFIG_DIR/skhdrc" ]; then
-    # 移除旧的 claude-voice-zh 配置
     grep -v "claude-voice-zh" "$SKHD_CONFIG_DIR/skhdrc" > "$SKHD_CONFIG_DIR/skhdrc.tmp" 2>/dev/null || true
     mv "$SKHD_CONFIG_DIR/skhdrc.tmp" "$SKHD_CONFIG_DIR/skhdrc"
 fi
 
 echo "# claude-voice-zh: F5 触发语音输入" >> "$SKHD_CONFIG_DIR/skhdrc"
 echo "$SKHD_ENTRY" >> "$SKHD_CONFIG_DIR/skhdrc"
-echo -e "  ${GREEN}✓${NC}"
-
-# --- 启动 skhd ---
-echo -e "${YELLOW}[6/6]${NC} 启动快捷键服务..."
 
 skhd --stop-service 2>/dev/null || true
 sleep 1
 skhd --start-service 2>/dev/null || true
 sleep 1
 
-# 检查 skhd 是否需要辅助功能权限
+# 检查辅助功能权限
 if grep -q "accessibility" /tmp/skhd_*.err.log 2>/dev/null; then
     echo ""
     echo -e "${YELLOW}⚠️  需要授权辅助功能权限：${NC}"
@@ -130,7 +126,6 @@ if grep -q "accessibility" /tmp/skhd_*.err.log 2>/dev/null; then
     echo "  1. 系统设置将自动打开"
     echo "  2. 在「辅助功能」列表中找到 skhd"
     echo "  3. 打开开关"
-    echo "  4. 如果没找到，点 + 号添加 /opt/homebrew/bin/skhd"
     echo ""
     open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     echo -e "  授权后按回车继续..."
@@ -139,32 +134,39 @@ if grep -q "accessibility" /tmp/skhd_*.err.log 2>/dev/null; then
     sleep 1
 fi
 
+echo -e "  ${GREEN}✓${NC}"
+
 # --- 检查 PATH ---
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo ""
-    echo -e "${YELLOW}提示：${NC}请将以下内容添加到你的 shell 配置文件 (~/.zshrc)："
+    echo -e "${YELLOW}提示：${NC}请将以下内容添加到 ~/.zshrc："
     echo ""
     echo -e "  ${CYAN}export PATH=\"\$HOME/.local/bin:\$PATH\"${NC}"
     echo ""
 fi
+
+# --- 首次权限 ---
+echo ""
+echo -e "${YELLOW}首次使用需要授权两个权限：${NC}"
+echo "  1. 麦克风权限 — 按 F5 时系统会弹窗询问"
+echo "  2. 语音识别权限 — 同上"
+echo "  授权一次后，后续使用不会再弹窗"
 
 # --- 完成 ---
 echo ""
 echo -e "${GREEN}${BOLD}✅ 安装完成！${NC}"
 echo ""
 echo -e "  ${BOLD}使用方法：${NC}"
-echo -e "  按 ${CYAN}F5${NC} 开始录音"
-echo -e "  说中文"
-echo -e "  再按 ${CYAN}F5${NC} 停止 → 自动转写 → 自动粘贴"
+echo -e "  按 ${CYAN}F5${NC} 开始录音（边说边出字）"
+echo -e "  再按 ${CYAN}F5${NC} 停止 → 自动粘贴"
 echo ""
 echo -e "  ${BOLD}提示音：${NC}"
 echo -e "  🔔 Tink = 开始录音"
 echo -e "  🔔 Pop  = 停止录音"
 echo ""
-echo -e "  ${BOLD}升级模型（更准确）：${NC}"
-echo -e "  curl -L -o ~/.claude-voice-zh/models/ggml-medium.bin \\"
-echo -e "    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
-echo -e "  export CLAUDE_VOICE_MODEL=~/.claude-voice-zh/models/ggml-medium.bin"
+echo -e "  ${BOLD}改语言：${NC}"
+echo -e "  export CLAUDE_VOICE_LANG=en   # 英文"
+echo -e "  export CLAUDE_VOICE_LANG=ja   # 日文"
 echo ""
 echo -e "  ${BOLD}卸载：${NC}"
 echo -e "  curl -fsSL $REPO_URL/uninstall.sh | bash"
