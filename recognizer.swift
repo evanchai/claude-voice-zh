@@ -88,15 +88,23 @@ let audioEngine = AVAudioEngine()
 let inputNode = audioEngine.inputNode
 let inputFmt = inputNode.outputFormat(forBus: 0)
 
-// Audio file writer: save in native format (afconvert handles 16kHz conversion later)
+fputs("input format: \(inputFmt.channelCount)ch, \(inputFmt.sampleRate)Hz\n", stderr)
+
+// Convert to mono for SFSpeechRecognizer compatibility (built-in mic can be 3ch)
+let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: inputFmt.sampleRate, channels: 1, interleaved: true)!
+let mixerNode = AVAudioMixerNode()
+audioEngine.attach(mixerNode)
+audioEngine.connect(inputNode, to: mixerNode, format: inputFmt)
+
+// Audio file writer: save in mono format
 let cafURL = URL(fileURLWithPath: audioFile)
 var audioWriter: AVAudioFile?
 do {
     audioWriter = try AVAudioFile(
         forWriting: cafURL,
-        settings: inputFmt.settings,
-        commonFormat: inputFmt.commonFormat,
-        interleaved: inputFmt.isInterleaved
+        settings: monoFormat.settings,
+        commonFormat: monoFormat.commonFormat,
+        interleaved: true
     )
 } catch {
     fputs("warning: cannot create audio file: \(error)\n", stderr)
@@ -112,8 +120,8 @@ if #available(macOS 13.0, *) {
     request.addsPunctuation = true
 }
 
-// --- Install audio tap: feed Apple + save audio ---
-inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFmt) { buf, _ in
+// --- Install audio tap on mixer (mono output) ---
+mixerNode.installTap(onBus: 0, bufferSize: 4096, format: monoFormat) { buf, _ in
     request.append(buf)
     try? audioWriter?.write(from: buf)
 }
@@ -135,11 +143,13 @@ func writeState(_ mode: String, _ text: String) {
 }
 
 // --- Recognition task ---
+fputs("recognition started, listening...\n", stderr)
 let _ = speechRecognizer.recognitionTask(with: request) { result, error in
     guard !isShuttingDown else { return }
 
     if let result = result {
         currentText = result.bestTranscription.formattedString
+        fputs("partial: \(currentText)\n", stderr)
         writeState("recording", currentText)
     }
 
@@ -155,7 +165,7 @@ func shutdown() {
 
     request.endAudio()
     audioEngine.stop()
-    audioEngine.inputNode.removeTap(onBus: 0)
+    mixerNode.removeTap(onBus: 0)
     audioWriter = nil  // flush and close audio file
 
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
