@@ -87,16 +87,14 @@ if let custom = try? String(contentsOfFile: vocabFile, encoding: .utf8) {
 let audioEngine = AVAudioEngine()
 let inputNode = audioEngine.inputNode
 let inputFmt = inputNode.outputFormat(forBus: 0)
+let channels = Int(inputFmt.channelCount)
 
-fputs("input format: \(inputFmt.channelCount)ch, \(inputFmt.sampleRate)Hz\n", stderr)
+fputs("input format: \(channels)ch, \(inputFmt.sampleRate)Hz\n", stderr)
 
-// Convert to mono for SFSpeechRecognizer compatibility (built-in mic can be 3ch)
+// Mono format for SFSpeechRecognizer (it can't handle 3ch built-in mic)
 let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: inputFmt.sampleRate, channels: 1, interleaved: true)!
-let mixerNode = AVAudioMixerNode()
-audioEngine.attach(mixerNode)
-audioEngine.connect(inputNode, to: mixerNode, format: inputFmt)
 
-// Audio file writer: save in mono format
+// Audio file writer
 let cafURL = URL(fileURLWithPath: audioFile)
 var audioWriter: AVAudioFile?
 do {
@@ -120,10 +118,42 @@ if #available(macOS 13.0, *) {
     request.addsPunctuation = true
 }
 
-// --- Install audio tap on mixer (mono output) ---
-mixerNode.installTap(onBus: 0, bufferSize: 4096, format: monoFormat) { buf, _ in
-    request.append(buf)
-    try? audioWriter?.write(from: buf)
+// --- Helper: downmix multi-channel buffer to mono ---
+func toMono(_ buf: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+    let frameCount = buf.frameLength
+    guard frameCount > 0 else { return nil }
+    guard let monoBuf = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: frameCount) else { return nil }
+    monoBuf.frameLength = frameCount
+
+    guard let dstPtr = monoBuf.floatChannelData?[0] else { return nil }
+
+    if channels <= 1, let srcPtr = buf.floatChannelData?[0] {
+        // Already mono — just copy
+        dstPtr.update(from: srcPtr, count: Int(frameCount))
+    } else if let chData = buf.floatChannelData {
+        // Average all channels
+        for frame in 0..<Int(frameCount) {
+            var sum: Float = 0
+            for ch in 0..<channels {
+                sum += chData[ch][frame]
+            }
+            dstPtr[frame] = sum / Float(channels)
+        }
+    } else {
+        return nil
+    }
+    return monoBuf
+}
+
+// --- Install audio tap: capture native format, downmix to mono ---
+inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFmt) { buf, _ in
+    if channels <= 1 {
+        request.append(buf)
+        try? audioWriter?.write(from: buf)
+    } else if let mono = toMono(buf) {
+        request.append(mono)
+        try? audioWriter?.write(from: mono)
+    }
 }
 
 audioEngine.prepare()
@@ -165,7 +195,7 @@ func shutdown() {
 
     request.endAudio()
     audioEngine.stop()
-    mixerNode.removeTap(onBus: 0)
+    inputNode.removeTap(onBus: 0)
     audioWriter = nil  // flush and close audio file
 
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
