@@ -94,6 +94,18 @@ fi
 touch "$DEBOUNCE_FILE"
 
 # --- LLM 后处理 ---
+resolve_api_key() {
+    # 1. 环境变量 / .env 文件中的 key
+    if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        printf '%s' "$ANTHROPIC_API_KEY"
+        return 0
+    fi
+    # 2. Claude Code OAuth token（macOS keychain）
+    local creds
+    creds=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null) || return 1
+    printf '%s' "$creds" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null
+}
+
 refine_with_llm() {
     local raw="$1"
     local char_count=${#raw}
@@ -104,40 +116,33 @@ refine_with_llm() {
         return 0
     fi
 
-    # 需要 API key
-    if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-        log "refine: skipped (no ANTHROPIC_API_KEY)"
+    local api_key
+    api_key=$(resolve_api_key)
+    if [ -z "$api_key" ]; then
+        log "refine: skipped (no API key)"
         printf '%s' "$raw"
         return 0
     fi
 
     write_overlay_state refining "$raw"
 
-    local prompt
-    prompt=$(cat <<'PROMPT_END'
-修正以下语音识别文本中的错误。规则：
-1. 修正技术术语拼写（编程、AI、开发工具等常见术语）
-2. 修正明显的同音字错误
-3. 优化标点符号
-4. 不改变原意，不添加内容，不删减内容
-5. 只输出修正后的文本，不要任何解释或前缀
-PROMPT_END
-)
+    local sys_prompt="你是语音识别后处理器，用户在编程/开发场景中说话。修正语音识别错误：技术术语（Vercel, React, TypeScript, Claude, deploy, component 等）、标点。保留中英混杂，不翻译英文词，不改措辞。只输出修正文本。"
 
     local body
     body=$(jq -cn \
-        --arg prompt "$prompt" \
+        --arg sys "$sys_prompt" \
         --arg text "$raw" \
         '{
             model: "claude-haiku-4-5-20251001",
             max_tokens: 1024,
-            messages: [{role: "user", content: ($prompt + "\n\n" + $text)}]
+            system: $sys,
+            messages: [{role: "user", content: $text}]
         }')
 
     local response
-    response=$(curl -s --max-time 2 \
+    response=$(curl -s --max-time 3 \
         -H "content-type: application/json" \
-        -H "x-api-key: $ANTHROPIC_API_KEY" \
+        -H "x-api-key: $api_key" \
         -H "anthropic-version: 2023-06-01" \
         -d "$body" \
         "https://api.anthropic.com/v1/messages" 2>/dev/null) || {
