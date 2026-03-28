@@ -25,8 +25,9 @@ func readOverlayState(fallbackMode: String = "recording") -> OverlayState {
     let mode = (lines.first ?? fallbackMode).trimmed
     let text = lines.dropFirst().joined(separator: " ").trimmed
 
+    let validModes = ["recording", "transcribing", "refining"]
     return OverlayState(
-        mode: mode == "transcribing" ? "transcribing" : "recording",
+        mode: validModes.contains(mode) ? mode : "recording",
         text: text
     )
 }
@@ -68,6 +69,8 @@ final class CapsuleView: NSView {
         switch state.mode {
         case "transcribing":
             return state.text.isEmpty ? "正在整理..." : state.text
+        case "refining":
+            return state.text.isEmpty ? "正在润色..." : "✨ " + state.text
         default:
             return state.text.isEmpty ? "正在听..." : state.text
         }
@@ -106,6 +109,22 @@ final class CapsuleView: NSView {
     private func drawIndicator() {
         let center = NSPoint(x: 22, y: bounds.midY)
         let accent = NSColor(calibratedRed: 0.37, green: 0.61, blue: 1.0, alpha: 1.0)
+        let purple = NSColor(calibratedRed: 0.65, green: 0.45, blue: 1.0, alpha: 1.0)
+
+        if state.mode == "refining" {
+            // Spinning arc
+            let radius = 7.0
+            let startAngle = CGFloat(t * 5.0).truncatingRemainder(dividingBy: CGFloat.pi * 2)
+            let arcPath = NSBezierPath()
+            arcPath.appendArc(withCenter: center, radius: CGFloat(radius),
+                              startAngle: startAngle * 180 / .pi,
+                              endAngle: (startAngle + .pi * 1.2) * 180 / .pi)
+            purple.withAlphaComponent(0.85).setStroke()
+            arcPath.lineWidth = 2.5
+            arcPath.lineCapStyle = .round
+            arcPath.stroke()
+            return
+        }
 
         if state.mode == "transcribing" {
             for index in 0..<3 {
