@@ -1,6 +1,6 @@
 #!/bin/bash
 # claude-voice-zh 一键安装脚本
-# curl -fsSL https://raw.githubusercontent.com/nicning/claude-voice-zh/main/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/evanchai/claude-voice-zh/main/install.sh | bash
 
 set -euo pipefail
 
@@ -15,7 +15,7 @@ NC='\033[0m'
 INSTALL_DIR="$HOME/.claude-voice-zh"
 BIN_DIR="$HOME/.local/bin"
 SKHD_CONFIG_DIR="$HOME/.config/skhd"
-REPO_URL="https://raw.githubusercontent.com/nicning/claude-voice-zh/main"
+REPO_URL="https://raw.githubusercontent.com/evanchai/claude-voice-zh/main"
 
 echo ""
 echo -e "${CYAN}${BOLD}╔═══════════════════════════════════════╗${NC}"

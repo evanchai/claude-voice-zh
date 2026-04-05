@@ -1,6 +1,6 @@
 #!/bin/bash
 # claude-voice-zh — Apple 原生中文语音输入，专为 Claude Code 设计
-# https://github.com/nicning/claude-voice-zh
+# https://github.com/evanchai/claude-voice-zh
 
 set -euo pipefail
 

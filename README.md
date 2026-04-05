@@ -24,7 +24,7 @@ Claude Code 的语音模式支持 20 种语言，但**不支持中文**。这个
 ## 安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nicning/claude-voice-zh/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/evanchai/claude-voice-zh/main/install.sh | bash
 ```
 
 安装脚本会自动：
@@ -92,7 +92,7 @@ ctrl + shift - space : ~/.claude-voice-zh/claude-voice-zh.sh
 ## 卸载
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nicning/claude-voice-zh/main/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/evanchai/claude-voice-zh/main/uninstall.sh | bash
 ```
 
 ## 系统要求
