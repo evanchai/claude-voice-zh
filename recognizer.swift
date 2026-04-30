@@ -7,6 +7,8 @@ var langInput = "zh"
 var stateFile = "/tmp/claude-voice-zh/overlay-state"
 var resultFile = "/tmp/claude-voice-zh/result.txt"
 var audioFile = "/tmp/claude-voice-zh/recording.wav"
+var silenceTimeout: Double = 0
+var stopKeyword: String = ""
 
 var i = 1
 while i < CommandLine.arguments.count {
@@ -19,6 +21,10 @@ while i < CommandLine.arguments.count {
         resultFile = CommandLine.arguments[i + 1]; i += 2
     case "--audio" where i + 1 < CommandLine.arguments.count:
         audioFile = CommandLine.arguments[i + 1]; i += 2
+    case "--silence-timeout" where i + 1 < CommandLine.arguments.count:
+        silenceTimeout = Double(CommandLine.arguments[i + 1]) ?? 0; i += 2
+    case "--stop-keyword" where i + 1 < CommandLine.arguments.count:
+        stopKeyword = CommandLine.arguments[i + 1].lowercased(); i += 2
     default:
         i += 1
     }
@@ -167,20 +173,69 @@ do {
 // --- State ---
 var currentText = ""
 var isShuttingDown = false
+var lastResultTime = Date()
+var silenceTimer: DispatchSourceTimer?
+var hasReceivedSpeech = false
 
 func writeState(_ mode: String, _ text: String) {
     try? "\(mode)\n\(text)".write(toFile: stateFile, atomically: true, encoding: .utf8)
 }
 
+// --- Silence detection timer ---
+func resetSilenceTimer() {
+    silenceTimer?.cancel()
+    silenceTimer = nil
+    guard silenceTimeout > 0 && hasReceivedSpeech else { return }
+    let timer = DispatchSource.makeTimerSource(queue: .main)
+    timer.schedule(deadline: .now() + silenceTimeout)
+    timer.setEventHandler {
+        fputs("auto-stop: silence timeout (\(silenceTimeout)s)\n", stderr)
+        shutdown()
+    }
+    timer.resume()
+    silenceTimer = timer
+}
+
+// --- Stop keyword detection ---
+func checkStopKeyword(_ text: String) -> String? {
+    guard !stopKeyword.isEmpty else { return nil }
+    let lower = text.lowercased()
+    if let range = lower.range(of: stopKeyword, options: .backwards) {
+        let cleaned = text[text.startIndex..<range.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: .punctuationCharacters)
+        fputs("auto-stop: keyword '\(stopKeyword)' detected\n", stderr)
+        return cleaned
+    }
+    return nil
+}
+
 // --- Recognition task ---
 fputs("recognition started, listening...\n", stderr)
+if silenceTimeout > 0 {
+    fputs("silence auto-stop: \(silenceTimeout)s\n", stderr)
+}
+if !stopKeyword.isEmpty {
+    fputs("stop keyword: \(stopKeyword)\n", stderr)
+}
+
 let _ = speechRecognizer.recognitionTask(with: request) { result, error in
     guard !isShuttingDown else { return }
 
     if let result = result {
         currentText = result.bestTranscription.formattedString
+        hasReceivedSpeech = true
+        lastResultTime = Date()
         fputs("partial: \(currentText)\n", stderr)
         writeState("recording", currentText)
+
+        if let cleaned = checkStopKeyword(currentText) {
+            currentText = cleaned
+            shutdown()
+            return
+        }
+
+        resetSilenceTimer()
     }
 
     if let err = error as NSError?, err.code != 1 && err.code != 203 {

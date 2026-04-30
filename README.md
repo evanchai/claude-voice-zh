@@ -13,7 +13,7 @@ Claude Code 的语音模式支持 20 种语言，但**不支持中文**。这个
 
 ## 特性
 
-- **一个键操作** — F5 开始录音，F5 停止，自动粘贴
+- **一个键操作** — F5 开始录音，F5 停止，自动粘贴（也支持静音自动停止或语音关键词停止）
 - **实时出字** — 边说边在顶部胶囊里显示识别结果
 - **AI 润色** — 停止后自动用 Haiku 修正技术术语、标点和同音字（~1s）
 - **中英混杂** — 说中文夹英文单词，自动识别，润色时保留不翻译
@@ -44,6 +44,8 @@ curl -fsSL https://raw.githubusercontent.com/evanchai/claude-voice-zh/main/insta
 | 按 **F5** | 🔔 Tink 提示音，开始录音，顶部出现实时预览胶囊 |
 | 说中文 | 边说边出字，支持中英混杂 |
 | 再按 **F5** | 🔔 Pop 提示音，停止 → AI 润色 → 粘贴 |
+| （或等待静音超时） | 自动停止 → AI 润色 → 粘贴 |
+| （或说 "over over"） | 识别到关键词 → 自动停止 → 粘贴 |
 
 ## 配置
 
@@ -53,6 +55,12 @@ curl -fsSL https://raw.githubusercontent.com/evanchai/claude-voice-zh/main/insta
 # 改变识别语言（默认 zh，即简体中文）
 export CLAUDE_VOICE_LANG=en    # 英文
 export CLAUDE_VOICE_LANG=ja    # 日文
+
+# 静音自动停止：说完话后静默 N 秒自动停止并粘贴（默认 0 = 关闭）
+export CLAUDE_VOICE_SILENCE_TIMEOUT=10
+
+# 语音关键词停止：识别到关键词后自动停止（关键词不会出现在最终文本中）
+export CLAUDE_VOICE_STOP_KEYWORD="over over"
 
 # 关闭 LLM 润色（默认开启）
 export CLAUDE_VOICE_REFINE=off

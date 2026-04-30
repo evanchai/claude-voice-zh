@@ -22,6 +22,8 @@ fi
 VOICE_LANG="${CLAUDE_VOICE_LANG:-zh}"
 VOICE_REFINE="${CLAUDE_VOICE_REFINE:-on}"
 VOICE_REFINE_MIN_CHARS="${CLAUDE_VOICE_REFINE_MIN_CHARS:-5}"
+VOICE_SILENCE_TIMEOUT="${CLAUDE_VOICE_SILENCE_TIMEOUT:-0}"
+VOICE_STOP_KEYWORD="${CLAUDE_VOICE_STOP_KEYWORD:-}"
 
 # --- 临时文件 ---
 TMP_DIR="/tmp/claude-voice-zh"
@@ -213,11 +215,51 @@ else
     write_overlay_state recording ""
     ensure_overlay
 
-    "$RECOGNIZER" \
-        --lang "$VOICE_LANG" \
-        --state "$OVERLAY_STATE_FILE" \
-        --result "$RESULT_FILE" \
-        >>"$LOG" 2>&1 &
-    echo $! > "$REC_PID_FILE"
-    log "recognizer pid=$!"
+    RECOGNIZER_ARGS=(
+        --lang "$VOICE_LANG"
+        --state "$OVERLAY_STATE_FILE"
+        --result "$RESULT_FILE"
+    )
+    if [ "$VOICE_SILENCE_TIMEOUT" != "0" ] && [ -n "$VOICE_SILENCE_TIMEOUT" ]; then
+        RECOGNIZER_ARGS+=(--silence-timeout "$VOICE_SILENCE_TIMEOUT")
+    fi
+    if [ -n "$VOICE_STOP_KEYWORD" ]; then
+        RECOGNIZER_ARGS+=(--stop-keyword "$VOICE_STOP_KEYWORD")
+    fi
+
+    "$RECOGNIZER" "${RECOGNIZER_ARGS[@]}" >>"$LOG" 2>&1 &
+    REC_PID=$!
+    echo $REC_PID > "$REC_PID_FILE"
+    log "recognizer pid=$REC_PID"
+
+    if [ "$VOICE_SILENCE_TIMEOUT" != "0" ] || [ -n "$VOICE_STOP_KEYWORD" ]; then
+        (
+            while kill -0 "$REC_PID" 2>/dev/null; do
+                sleep 0.5
+            done
+            [ -f "$LOCK_FILE" ] || exit 0
+
+            rm -f "$LOCK_FILE"
+            afplay /System/Library/Sounds/Pop.aiff 2>/dev/null &
+            log "auto-stop: recognizer exited, processing result"
+
+            if [ -f "$RESULT_FILE" ]; then
+                RESULT=$(cat "$RESULT_FILE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                log "auto-stop result: [$RESULT]"
+                if [ -n "$RESULT" ]; then
+                    if [ "$VOICE_REFINE" = "on" ]; then
+                        RESULT=$(refine_with_llm "$RESULT")
+                    fi
+                    printf '%s' "$RESULT" | pbcopy
+                    sleep 0.05
+                    osascript -e 'tell application "System Events" to keystroke "v" using command down'
+                    log "auto-stop: pasted"
+                fi
+            fi
+
+            rm -f "$OVERLAY_STATE_FILE"
+            [ -x "$OVERLAY" ] && "$OVERLAY" hide >/dev/null 2>&1 &
+            rm -f "$RESULT_FILE" "$REC_PID_FILE"
+        ) >>"$LOG" 2>&1 &
+    fi
 fi
